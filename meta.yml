@@ -1,0 +1,12 @@
+schema: "0.0"
+
+source_directory: ./testdata/orig/
+
+destination_directory: ./testdata/
+
+files:
+  - name: a
+    display_name: あああああ
+    tags:
+      - tag
+      - by-name/あいうえを

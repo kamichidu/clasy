@@ -1,22 +1,46 @@
-package main
+package commands
 
 import (
+	"context"
 	"fmt"
+	"github.com/kamichidu/clasy"
+	"gopkg.in/urfave/cli.v1"
 	"io"
 	"os"
 	"path/filepath"
 )
 
-func classify(r io.Reader) error {
-	var err error
-	meta, err := LoadMetaFromReader(r)
+func classifyAction(c *cli.Context) error {
+	plugins, err := clasy.LoadPlugins("./plugins-enabled/")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Can't load plugins, disabling it...")
+	}
+	fmt.Fprintf(os.Stderr, "Loaded plugins: %s\n", plugins.Name())
+
+	var r io.Reader
+	meta, err := clasy.LoadMetaFromReader(r)
 	if err != nil {
 		return err
 	}
 
 	for _, fileData := range meta.Files {
+		srcFilename := filepath.Join(meta.SrcDir, fileData.Name)
+		if fileInfo, err := os.Stat(srcFilename); err != nil {
+			fmt.Fprintf(os.Stderr, "Can't stat file: %v: %s\n", srcFilename, err)
+			continue
+		} else {
+			// overwrite file data
+			modFileData, err := plugins.TakeMetaInfo(context.Background(), fileInfo)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Can't plugged-in, proceed any way: %s", err)
+			} else if modFileData != nil {
+				fmt.Fprintf(os.Stderr, "Plugin modified file data: %s\n", srcFilename)
+				fileData = modFileData
+			}
+		}
+
 		for _, tag := range fileData.Tags {
-			srcFilename := filepath.Join(meta.SrcDir, fileData.Name)
 			destFilename := filepath.Join(meta.DestDir, tag, fileData.DisplayName)
 
 			destDir := filepath.Dir(destFilename)
@@ -52,4 +76,17 @@ func classify(r io.Reader) error {
 		}
 	}
 	return nil
+}
+
+func init() {
+	Commands = append(Commands, cli.Command{
+		Name: "classify",
+		Flags: []cli.Flag{
+			cli.BoolFlag{
+				Name:  "dry-run",
+				Usage: "",
+			},
+		},
+		Action: classifyAction,
+	})
 }

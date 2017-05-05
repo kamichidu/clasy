@@ -1,8 +1,9 @@
-package main
+package clasy
 
 import (
 	"io"
 	"io/ioutil"
+	"os"
 
 	"gopkg.in/yaml.v2"
 )
@@ -30,4 +31,14 @@ func LoadMetaFromReader(r io.Reader) (*MetaFile, error) {
 		return nil, err
 	}
 	return meta, nil
+}
+
+func LoadMetaFromFilename(filename string) (*MetaFile, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return LoadMetaFromReader(file)
 }
