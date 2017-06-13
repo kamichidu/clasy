@@ -2,6 +2,8 @@ package clasy
 
 import (
 	"context"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,9 +11,33 @@ import (
 	"strings"
 )
 
+const loggerContextKey = "logger"
+
+type Logger interface {
+	Print(...interface{})
+	Printf(string, ...interface{})
+}
+
+type prefixedLogger interface {
+	Prefix() string
+	SetPrefix(string)
+}
+
+func WithLogger(parent context.Context, v Logger) context.Context {
+	return context.WithValue(parent, loggerContextKey, v)
+}
+
+func LoggerFromContext(c context.Context) Logger {
+	if v, ok := c.Value(loggerContextKey).(Logger); ok {
+		return v
+	} else {
+		return log.New(ioutil.Discard, "", log.LstdFlags)
+	}
+}
+
 type Plugin interface {
 	Name() string
-	TakeMetaInfo(context.Context, os.FileInfo) (*FileData, error)
+	TakeMetaInfo(c context.Context, path string, info os.FileInfo) (string, []string, error)
 }
 
 type Plugins []Plugin
@@ -24,15 +50,30 @@ func (self Plugins) Name() string {
 	return strings.Join(names, ", ")
 }
 
-func (self Plugins) TakeMetaInfo(ctx context.Context, info os.FileInfo) (*FileData, error) {
+func (self Plugins) TakeMetaInfo(c context.Context, path string, info os.FileInfo) (string, []string, error) {
+	log := LoggerFromContext(c)
+	var logPrefix string
+	if log, ok := log.(prefixedLogger); ok {
+		logPrefix = log.Prefix()
+	}
+	defer func() {
+		if log, ok := log.(prefixedLogger); ok {
+			log.SetPrefix(logPrefix)
+		}
+	}()
+
 	for _, plug := range self {
-		if meta, err := plug.TakeMetaInfo(ctx, info); err != nil {
+		if log, ok := log.(prefixedLogger); ok {
+			log.SetPrefix(fmt.Sprintf("[%v] ", plug.Name()))
+		}
+
+		if displayName, tags, err := plug.TakeMetaInfo(WithLogger(c, log), path, info); err != nil {
 			log.Printf("plugin error: %s", err)
 		} else {
-			return meta, nil
+			return displayName, tags, nil
 		}
 	}
-	return nil, nil
+	return info.Name(), []string{}, nil
 }
 
 var _ Plugin = Plugins(nil)
@@ -51,13 +92,13 @@ func LoadPlugin(pluginDir string) (Plugin, error) {
 			log.Printf("plugin load failed: %s", err)
 			continue
 		}
-		sym, err := plg.Lookup("ClasyEnabled")
+		sym, err := plg.Lookup("CreatePlugin")
 		if err != nil {
 			log.Printf("symbol lookup failed: %s", err)
 			continue
 		}
-		if v, ok := sym.(Plugin); ok {
-			plugs = append(plugs, v)
+		if factory, ok := sym.(func() interface{}); ok {
+			plugs = append(plugs, factory().(Plugin))
 		} else {
 			log.Print("type assertion failed")
 		}
