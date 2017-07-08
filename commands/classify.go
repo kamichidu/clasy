@@ -45,8 +45,8 @@ func classifyAction(c *cli.Context) error {
 	if c.NArg() != 2 {
 		return cli.NewExitError("Must specify position arguments", 128)
 	}
-	srcDir := filepath.Clean(c.Args().Get(1))
-	destDir := filepath.Clean(c.Args().Get(2))
+	srcDir := filepath.Clean(c.Args().Get(0))
+	destDir := filepath.Clean(c.Args().Get(1))
 	logger.Printf("Source directory: %v", srcDir)
 	logger.Printf("Destination directory: %v", destDir)
 
@@ -61,7 +61,6 @@ func classifyAction(c *cli.Context) error {
 	if verbose {
 		logger.Printf("Gather files from %v", srcDir)
 	}
-	files := make([]*clasy.FileData, 0)
 	err = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			logger.Printf("Gathering files error: %s", err)
@@ -73,50 +72,31 @@ func classifyAction(c *cli.Context) error {
 			return nil
 		}
 
-		files = append(files, &clasy.FileData{
-			Name: info.Name(),
-		})
 		if verbose {
-			logger.Printf("Found file item: %v", info.Name())
-		}
-		return nil
-	})
-	if err != nil {
-		return cli.NewExitError(fmt.Sprintf("Gathering error: %s", err), 1)
-	}
-
-	for _, fileData := range files {
-		srcFilename := filepath.Join(srcDir, fileData.Name)
-		if verbose {
-			logger.Printf("With %v", srcFilename)
-		}
-		if fileInfo, err := os.Stat(srcFilename); err != nil {
-			logger.Printf("Can't stat file: %v: %s", srcFilename, err)
-			continue
-		} else {
-			// overwrite file data
-			plugCtx := context.Background()
-			plugCtx = clasy.WithLogger(plugCtx, logger)
-			displayName, tags, err := plug.TakeMetaInfo(plugCtx, srcFilename, fileInfo)
-			if err != nil {
-				logger.Printf("Can't plugged-in, proceed any way: %s", err)
-			}
-			if displayName != "" {
-				logger.Printf("Plugin modified display name: %s: %v -> %v", srcFilename, fileData.DisplayName, displayName)
-				fileData.DisplayName = displayName
-			}
-			if tags != nil {
-				logger.Printf("Plugin modified tags: %s: %v -> %v", srcFilename, fileData.Tags, tags)
-				fileData.Tags = tags
-			}
+			logger.Printf("Found file item: %v", path)
 		}
 
-		linkName := fileData.DisplayName
-		if linkName == "" {
-			linkName = fileData.Name
+		var (
+			displayName = info.Name()
+			tags        = make([]string, 0)
+		)
+
+		// overwrite file data
+		plugCtx := context.Background()
+		plugCtx = clasy.WithLogger(plugCtx, logger)
+		displayName, tags, err = plug.TakeMetaInfo(plugCtx, path, info)
+		if err != nil {
+			logger.Printf("Can't plugged-in, proceed any way: %s", err)
 		}
-		for _, tag := range fileData.Tags {
-			destFilename := filepath.Join(destDir, tag, linkName)
+		if displayName != "" {
+			logger.Printf("Plugin modified display name: %s: %v -> %v", path, info.Name(), displayName)
+		}
+		if tags != nil {
+			logger.Printf("Plugin modified tags: %s: %v", path, tags)
+		}
+
+		for _, tag := range tags {
+			destFilename := filepath.Join(destDir, tag, displayName)
 
 			destDir := filepath.Dir(destFilename)
 			if _, err := os.Stat(destDir); err != nil {
@@ -129,19 +109,19 @@ func classifyAction(c *cli.Context) error {
 				}
 			}
 
-			relSrcFilename, err := filepath.Rel(destDir, srcFilename)
+			relSrcFilename, err := filepath.Rel(destDir, path)
 			if err != nil {
-				logger.Printf("Can't get relative path, basedir %v and file %v: %s", destDir, srcFilename, err)
+				logger.Printf("Can't get relative path, basedir %v and file %v: %s", destDir, path, err)
 				continue
 			}
 
 			if info, err := os.Lstat(destFilename); err != nil {
 				// not exist, just create it
 				if verbose {
-					logger.Printf("Create symlink: %v => %v", srcFilename, destFilename)
+					logger.Printf("Create symlink: %v => %v", path, destFilename)
 				}
 				if err = os.Symlink(relSrcFilename, destFilename); err != nil {
-					logger.Printf("Can't create symlink %v => %v: %s", srcFilename, destFilename, err)
+					logger.Printf("Can't create symlink %v => %v: %s", path, destFilename, err)
 				}
 			} else if info.Mode()&os.ModeSymlink == os.ModeSymlink {
 				// already exists, check conditions and report it
@@ -158,6 +138,10 @@ func classifyAction(c *cli.Context) error {
 				logger.Printf("Can't create symlink, file already exits and it has unknown state: %s", destFilename)
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return cli.NewExitError(fmt.Sprintf("Gathering error: %s", err), 1)
 	}
 	return nil
 }
